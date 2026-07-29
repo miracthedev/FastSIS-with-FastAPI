@@ -1,0 +1,224 @@
+from contextlib import asynccontextmanager
+from datetime import datetime
+import logging
+from typing import Annotated, Optional
+from fastapi import Body, Depends, FastAPI, HTTPException, Path, Query
+from sqlalchemy import Engine
+from sqlmodel import Field, SQLModel, Session, delete, select
+from models import Class, Department, Lecture, Student, Teacher
+from models.Teacher import TeacherPost, TeacherUpdate
+from sql import start_db
+
+# Global engine
+engine_global = start_db()
+
+def create_teachers(engine: Engine):
+    with Session(engine) as session:
+        existing_teacher = session.get(Teacher, 1)
+        if not existing_teacher:
+            teacher1 = Teacher(fullname="hoca1", dept_id=1)
+            teacher2 = Teacher(fullname="hocacav", dept_id=1)
+            teacher3 = Teacher(fullname="234",dept_id=2)
+            teacher4 = Teacher(fullname="1 1 1",dept_id=2)
+
+            session.add(teacher1)  
+            session.add(teacher2)
+            session.add(teacher3)
+            session.add(teacher4)
+            session.commit()
+            logging.info("teachers added to the database")
+
+def create_students(engine: Engine):
+    with Session(engine) as session:
+        existing_student = session.get(Student, 1)
+        if not existing_student:
+            student1 = Student(fullname="mirazozalp", department="Computer Engineering", grade=4, gpa=2.70, year_of_entry=2022)
+            student2 = Student(fullname="fractali", department="Computer Engineering", grade=4, gpa=3.99, year_of_entry=2022)
+            student3 = Student(fullname="avc", department="math Engineering", grade=9532, gpa=4.1, year_of_entry=1970)
+            student4 = Student(fullname="xyz", department="xyz Engineering", grade=23, gpa=1.1, year_of_entry=1984)
+
+            session.add(student1)  
+            session.add(student2)
+            session.add(student3)
+            session.add(student4)
+            session.commit()
+            print("Students added to the database!")
+
+
+logging.info("Confirmation that things are working.")
+
+#########################################
+# DELVE DEEP ON THIS !!!!
+# Define the Lifespan event to trigger creation on startup
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    create_students(engine_global)
+    create_teachers(engine_global)
+    yield
+
+# Attach the lifespan to your FastAPI app
+app = FastAPI(lifespan=lifespan)
+#########################################
+
+def getter_all():
+    with Session(engine_global) as session:
+        students = session.exec(select(Student)).all()
+        teachers = session.exec(select(Teacher)).all()
+        classes = session.exec(select(Class)).all()
+        depts = session.exec(select(Department)).all()
+        lectures = session.exec(select(Lecture)).all()
+
+        if not students and not teachers and not classes and not depts and not lectures:
+            raise HTTPException(status_code=404, detail="The database is completely empty.")
+
+        return {
+            "students": students,
+            "teachers": teachers,
+            "departments": depts,
+            "classes": classes,
+            "lectures": lectures
+        }
+
+getter_all_deps = Annotated[dict, Depends(getter_all)]
+
+@app.get("/", tags="*")
+async def get_all_info(get_all: getter_all_deps):
+    return get_all
+
+@app.delete("/", tags=["☢️"])
+def WIPE_OUT(get_all: getter_all_deps):
+    if (get_all != None):
+        with Session(engine_global) as session:
+            session.exec(delete(Student))
+            session.exec(delete(Teacher))
+            session.exec(delete(Class))
+            session.exec(delete(Department))
+            session.exec(delete(Lecture))
+
+            #BOOM!!!
+            session.commit()
+
+            return{"result": "☢️'d database"}
+
+@app.get("/students/{student_id}", tags=["Student"])
+async def get_student(
+    student_id: int, 
+    q: Annotated[str | None, Query(lt=100)] = None
+    ):
+    with Session(engine_global) as session:
+        student = session.get(Student, student_id)
+        if not student:
+            raise HTTPException(status_code=404, detail="Student not found")
+            
+        student_dict = student.model_dump()
+        if q:
+            return {**student_dict, "q": q}
+        return student_dict
+
+@app.get("/students/", tags=["Student"])
+async def get_all_students():
+    with Session(engine_global) as session:
+        all_students = session.exec(select(Student)).all()
+        if all_students == None:
+            raise HTTPException(status_code=404, detail="No student found!")
+        return all_students
+
+
+@app.post("/students/", tags=["Student"])
+async def create_student(student: Student):
+    with Session(engine_global) as session:
+        session.add(student)
+        session.commit()
+        session.refresh(student)
+        return student
+
+@app.patch("/students/{student_id}", tags=["Student"])
+async def update_student(student_id: int, student: Annotated[Student, Body(embed=True)]):
+    results = {"student_id": student_id, "student": student}
+    return results
+
+@app.delete("/students/{student_id}", tags=["Student"])
+async def delete_student(student_id: Annotated[int, Path()]):
+    with Session(engine_global) as session:
+        # statement = select(Student).where(Student.student_id == student_id)
+        # results = session.exec(statement)
+        student = session.get(Student, student_id)
+
+        if not student:
+            raise HTTPException(status_code=404, detail="Student not found")
+
+        print("Student: ", student)
+
+        session.delete(student)
+        session.commit()
+        
+        return {"ok": True, "message": f"Student {student_id} successfully deleted"}
+
+@app.get("/teachers/{teacher_id}", tags=["Teacher"])
+def get_teacher(
+    teacher_id: Annotated[int, Path(title="ID of teacher")]
+    ):
+    with Session(engine_global) as session:
+        searched_teacher = session.get(Teacher, teacher_id)
+        if not searched_teacher:
+            raise HTTPException(status_code=404, detail="Teacher Not found")
+        return searched_teacher
+
+@app.get("/teachers/", tags=["Teacher"])
+def get_all_teachers():
+    with Session(engine_global) as session:
+        all_teachers: Annotated[dict[Teacher], Body(embed=True)] = session.exec(select(Teacher)).all()
+        if not all_teachers or all_teachers == []:
+            raise HTTPException(status_code=404, detail="Teacher Not Found!")
+        return all_teachers
+    
+
+@app.post("/teachers/", tags=["Teacher"])
+def post_teacher(teacher: Annotated[TeacherPost, Body()]) :
+    with Session(engine_global) as session:
+        teacher_dict = teacher.model_dump()
+
+        TeacherPost_to_Teacher: Teacher = Teacher(**teacher_dict)
+
+        session.add(TeacherPost_to_Teacher)
+        session.commit()
+        session.refresh(TeacherPost_to_Teacher)
+        return TeacherPost_to_Teacher
+
+@app.patch("/teachers/{teacher_id}", tags=["Teacher"])
+def update_teacher(
+    teacher_id: Annotated[int, Path(description="Used for partially updating info on desired teacher")],
+    update_info: Annotated[TeacherUpdate, Body(title="Partially Update Teacher")] ):
+
+    with Session(engine_global) as session:
+        retrieved_teacher = session.get(Teacher, teacher_id)
+
+        if not retrieved_teacher:
+            raise HTTPException(status_code=404, detail="Teacher not found!")
+
+        update_data = update_info.model_dump(exclude_unset=True)
+
+        if not update_data:
+            return {"status": "Nothing has been updated, input is empty"}
+
+        for key, value in update_data.items():
+            setattr(retrieved_teacher, key, value)
+
+        session.add(retrieved_teacher)
+        session.commit()
+
+        session.refresh(retrieved_teacher)
+
+        return {"status": "Teacher has been updated", "teacher": retrieved_teacher}
+
+@app.delete("/teachers/{teacher_id}", tags=["Teacher"])
+async def delete_teacher(teacher_id: Annotated[int , Path(description="Teacher ID to be deleted",title="Teacher ID")]):
+    with Session(engine_global) as session:
+        delete_teach = session.get(Teacher, teacher_id)
+        if not delete_teach:
+            raise HTTPException(status_code=404, detail="Teacher not found!")
+        session.delete(delete_teach)
+        session.commit()
+        # session.refresh(delete_teach)
+        return {"status":f"succesfully slimed the teach! slimed teach: {delete_teach}"}
+        

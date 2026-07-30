@@ -16,10 +16,10 @@ def create_teachers(engine: Engine):
     with Session(engine) as session:
         existing_teacher = session.get(Teacher, 1)
         if not existing_teacher:
-            teacher1 = Teacher(fullname="hoca1", dept_id=1)
-            teacher2 = Teacher(fullname="hocacav", dept_id=1)
-            teacher3 = Teacher(fullname="234",dept_id=2)
-            teacher4 = Teacher(fullname="1 1 1",dept_id=2)
+            teacher1 = Teacher(fullname="hoca1")
+            teacher2 = Teacher(fullname="hocacav")
+            teacher3 = Teacher(fullname="234")
+            teacher4 = Teacher(fullname="1 1 1")
 
             session.add(teacher1)  
             session.add(teacher2)
@@ -32,17 +32,57 @@ def create_students(engine: Engine):
     with Session(engine) as session:
         existing_student = session.get(Student, 1)
         if not existing_student:
-            student1 = Student(fullname="mirazozalp", department="Computer Engineering", grade=4, gpa=2.70, year_of_entry=2022)
-            student2 = Student(fullname="fractali", department="Computer Engineering", grade=4, gpa=3.99, year_of_entry=2022)
-            student3 = Student(fullname="avc", department="math Engineering", grade=9532, gpa=4.1, year_of_entry=1970)
-            student4 = Student(fullname="xyz", department="xyz Engineering", grade=23, gpa=1.1, year_of_entry=1984)
+            student1 = Student(fullname="mirazozalp", dept_id=1, grade=4, gpa=2.70, year_of_entry=2022)
+            student2 = Student(fullname="fractali", dept_id=1, grade=4, gpa=3.99, year_of_entry=2022)
+            student3 = Student(fullname="avc", dept_id=2, grade=9532, gpa=4.1, year_of_entry=1970)
+            student4 = Student(fullname="xyz", dept_id=2, grade=23, gpa=1.1, year_of_entry=1984)
 
             session.add(student1)  
             session.add(student2)
             session.add(student3)
             session.add(student4)
             session.commit()
-            print("Students added to the database!")
+            logging.info("Students added to the database!")
+
+def create_departments(engine: Engine):
+    with Session(engine) as session:
+        existing_depts = session.get(Department, 1)
+        if not existing_depts:
+            dept1 = Department(department_name="Computer Engineering")
+            dept2 = Department(department_name="Electrical Engineering")
+            dept3 = Department(department_name="Industrial Engineering")
+
+            session.add(dept1)  
+            session.add(dept2)
+            session.add(dept3)
+            session.commit()
+            logging.info("Departments added to the database!")
+
+def create_lectures(engine: Engine):
+    with Session(engine) as session:
+        existing_lectures = session.get(Lecture, 1)
+        if not existing_lectures:
+            lect1 = Lecture(lecture_name="Discrete Math", lecture_code="MATH206", lecture_dept=1, lecture_session=1)
+            lect2 = Lecture(lecture_name="Object Orianted Programming", lecture_code="COMP201", lecture_dept=1, lecture_session=1)
+            lect3 = Lecture(lecture_name="Judaism 101", lecture_code="JUD101", lecture_dept=3, lecture_session=1)
+
+            session.add(lect1)  
+            session.add(lect2)
+            session.add(lect3)
+            session.commit()
+            logging.info("Lectures added to the database!")
+
+def create_classes(engine: Engine):
+    with Session(engine) as session:
+        existing_classes = session.get(Class, 1)
+        if not existing_classes:
+            class1 = Class(class_name="F123")
+            class2 = Class(class_name="A440")
+
+            session.add(class1)
+            session.add(class2)
+            logging.info("Classes added to the database!")
+            pass
 
 
 logging.info("Confirmation that things are working.")
@@ -54,6 +94,9 @@ logging.info("Confirmation that things are working.")
 async def lifespan(app: FastAPI):
     create_students(engine_global)
     create_teachers(engine_global)
+    create_lectures(engine_global)
+    create_departments(engine_global)
+    create_classes(engine_global)
     yield
 
 # Attach the lifespan to your FastAPI app
@@ -221,4 +264,15 @@ async def delete_teacher(teacher_id: Annotated[int , Path(description="Teacher I
         session.commit()
         # session.refresh(delete_teach)
         return {"status":f"succesfully slimed the teach! slimed teach: {delete_teach}"}
-        
+
+@app.get("/departments/{id}",tags=["Department"])
+def get_department(id: Annotated[int, Path()]):
+    with Session(engine_global) as session:
+        returned_dept = session.get(Department, id)
+        return returned_dept
+
+@app.get("/TESTING/",tags=["//TESTING//"])
+def anything_goes_around_here_nowadays():
+
+    with Session(engine_global) as session:
+        session.exec(select())

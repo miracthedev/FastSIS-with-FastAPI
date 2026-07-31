@@ -20,7 +20,7 @@ class Lecture(SQLModel, table=True):
     lecture_code: Annotated[str, Field(max_length=20)]
     lecture_session: Annotated[int, Field(max_length=1, gt=0)]
     lecture_dept : Annotated[int | None, Field(default=None, title="Lecture's origin dept.", description="Used for declaring which department this class belongs to", foreign_key="department.id")]
-    teacher_id: Annotated[int | None, Field(default=None, foreign_key="teacher.id")]
+    teacher_id: Annotated[int | None, Field(default=None, foreign_key="teacher.id", ondelete="CASCADE")]
     ects: int | None = Field(default=0, le=50, ge=0, )
 
     # Relationships

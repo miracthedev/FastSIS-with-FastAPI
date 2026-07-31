@@ -6,3 +6,4 @@ from .Class import Class
 from .Lecture import Lecture
 from .Student import Student
 from .StudentLectureLink import StudentLectureLink
+from .User import User

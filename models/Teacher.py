@@ -7,6 +7,7 @@ if TYPE_CHECKING:
     # 2. Add the dot (.) to tell Python to look in the same folder
     from .Department import Department
     from .Lecture import Lecture
+    from .User import User
 
 #TODO: use RELATIONSHIP() instead of Field()
 
@@ -19,7 +20,9 @@ class Teacher(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.now)
     class_id: int | None = Field(default=None, description="Store as comma-separated, or use a Relationship table")
     dept_id: int | None = Field(default=None, foreign_key="department.id")
+    user_id: int | None = Field(default=None, foreign_key="user.id", unique=True)
     orcid_id: str | None = None
+    user: Optional["User"] = Relationship(back_populates="teacher_profile")
     department: Optional["Department"] = Relationship(back_populates="teachers")
     lectures: list["Lecture"] = Relationship(back_populates="lecturer")
 

@@ -2,11 +2,16 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 import logging
 from typing import Annotated, Optional
-from fastapi import Body, Depends, FastAPI, HTTPException, Path, Query
+from fastapi import Body, Depends, FastAPI, HTTPException, Path, Query, status
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy import Engine
 from sqlmodel import Field, SQLModel, Session, delete, select
-from models import Class, Department, Lecture, Student, Teacher
+from models.StudentLectureLink import StudentLectureLink
+from models import Class, Department, Lecture, Student, Teacher, User
+from models.Department import DepartmentUpdate, DepartmentPost
 from models.Teacher import TeacherPost, TeacherUpdate
+from models.User import UserCreate, UserRole
+from auth.auth import get_password_hash, verify_password, create_access_token, get_current_user, require_role
 from sql import start_db
 
 # Global engine
@@ -48,9 +53,9 @@ def create_departments(engine: Engine):
     with Session(engine) as session:
         existing_depts = session.get(Department, 1)
         if not existing_depts:
-            dept1 = Department(department_name="Computer Engineering")
-            dept2 = Department(department_name="Electrical Engineering")
-            dept3 = Department(department_name="Industrial Engineering")
+            dept1 = Department(name="Computer Engineering")
+            dept2 = Department(name="Electrical Engineering")
+            dept3 = Department(name="Industrial Engineering")
 
             session.add(dept1)  
             session.add(dept2)
@@ -62,9 +67,9 @@ def create_lectures(engine: Engine):
     with Session(engine) as session:
         existing_lectures = session.get(Lecture, 1)
         if not existing_lectures:
-            lect1 = Lecture(lecture_name="Discrete Math", lecture_code="MATH206", lecture_dept=1, lecture_session=1)
-            lect2 = Lecture(lecture_name="Object Orianted Programming", lecture_code="COMP201", lecture_dept=1, lecture_session=1)
-            lect3 = Lecture(lecture_name="Judaism 101", lecture_code="JUD101", lecture_dept=3, lecture_session=1)
+            lect1 = Lecture(name="Discrete Math", lecture_code="MATH206", lecture_dept=1, lecture_session=1)
+            lect2 = Lecture(name="Object Orianted Programming", lecture_code="COMP201", lecture_dept=1, lecture_session=1)
+            lect3 = Lecture(name="Judaism 101", lecture_code="JUD101", lecture_dept=3, lecture_session=1)
 
             session.add(lect1)  
             session.add(lect2)
@@ -103,6 +108,8 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 #########################################
 
+
+
 def getter_all():
     with Session(engine_global) as session:
         students = session.exec(select(Student)).all()
@@ -124,12 +131,82 @@ def getter_all():
 
 getter_all_deps = Annotated[dict, Depends(getter_all)]
 
-@app.get("/", tags="*")
-async def get_all_info(get_all: getter_all_deps):
+admin_user_deps = Annotated[str, Depends(require_role(UserRole.admin))]
+student_user_deps = Annotated[str, Depends(require_role(UserRole.student))]
+teacher_user_deps = Annotated[str, Depends(require_role(UserRole.teacher))]
+
+@app.get("/", tags=["General"])
+async def get_all_info(get_all: getter_all_deps, admin_user: admin_user_deps):
     return get_all
 
+@app.get("/me/profile", tags=["Profile"])
+def get_my_profile(current_user: Annotated[User, Depends(get_current_user)]):
+    # Because of the 1:1 relationship, SQLAlchemy fetches the exact profile!
+    if current_user.role == UserRole.student:
+        return current_user.student_profile
+        
+    elif current_user.role == UserRole.teacher:
+        return current_user.teacher_profile
+        
+    return {"message": "Admin users don't have academic profiles."}
+
+@app.post("/users/register", tags=["Authentication"])
+def register_user(
+    user_in: UserCreate,
+    # admin_user: admin_user_deps
+):
+    with Session(engine_global) as session:
+        # 1. Check if the email is already taken
+        existing_user = session.exec(select(User).where(User.email == user_in.email)).first()
+        if existing_user:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email already registered"
+            )
+        
+        # 2. Hash the securely validated password
+        hashed_pw = get_password_hash(user_in.password)
+        
+        # 3. Create the Database model
+        db_user = User(
+            email=user_in.email,
+            hashed_password=hashed_pw,
+            role=user_in.role
+        )
+        
+        # 4. Save to the database
+        session.add(db_user)
+        session.commit()
+        session.refresh(db_user)
+        
+        # Safely return the user (FastAPI will hide the hashed_password 
+        # if you use a response_model, but for now we just return a dictionary)
+        return {"id": db_user.id, "email": db_user.email, "role": db_user.role}
+
+@app.post("/token", tags=["Authentication"])
+def login_for_access_token(
+    form_data: Annotated[OAuth2PasswordRequestForm, Depends()]
+):
+    with Session(engine_global) as session:
+        # Query the User table by email (OAuth2 uses the 'username' field to pass the email)
+        user = session.exec(select(User).where(User.email == form_data.username)).first()
+
+        if not user or not verify_password(form_data.password, user.hashed_password):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Incorrect email or password",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        
+        # Generate the token using the role!
+        access_token = create_access_token(data={"sub": user.email, "role": user.role})
+        return {"access_token": access_token, "token_type": "bearer"}
+
 @app.delete("/", tags=["☢️"])
-def WIPE_OUT(get_all: getter_all_deps):
+def WIPE_OUT(
+    get_all: getter_all_deps,
+    admin_user: admin_user_deps #DONT DELETE, ITS USED
+):
     if (get_all != None):
         with Session(engine_global) as session:
             session.exec(delete(Student))
@@ -145,8 +222,9 @@ def WIPE_OUT(get_all: getter_all_deps):
 
 @app.get("/students/{student_id}", tags=["Student"])
 async def get_student(
+    admin_user: admin_user_deps, #DONT DELETE, ITS USED
     student_id: int, 
-    q: Annotated[str | None, Query(lt=100)] = None
+    q: Annotated[str | None, Query(lt=100)] = None,
     ):
     with Session(engine_global) as session:
         student = session.get(Student, student_id)
@@ -159,7 +237,9 @@ async def get_student(
         return student_dict
 
 @app.get("/students/", tags=["Student"])
-async def get_all_students():
+async def get_all_students(
+    admin_user: admin_user_deps
+):
     with Session(engine_global) as session:
         all_students = session.exec(select(Student)).all()
         if all_students == None:
@@ -168,7 +248,7 @@ async def get_all_students():
 
 
 @app.post("/students/", tags=["Student"])
-async def create_student(student: Student):
+async def create_student(student: Student,admin_user: admin_user_deps):
     with Session(engine_global) as session:
         session.add(student)
         session.commit()
@@ -176,12 +256,12 @@ async def create_student(student: Student):
         return student
 
 @app.patch("/students/{student_id}", tags=["Student"])
-async def update_student(student_id: int, student: Annotated[Student, Body(embed=True)]):
+async def update_student(student_id: int, student: Annotated[Student, Body(embed=True)], admin_user: admin_user_deps):
     results = {"student_id": student_id, "student": student}
     return results
 
 @app.delete("/students/{student_id}", tags=["Student"])
-async def delete_student(student_id: Annotated[int, Path()]):
+async def delete_student(student_id: Annotated[int, Path()], admin_user: admin_user_deps):
     with Session(engine_global) as session:
         # statement = select(Student).where(Student.student_id == student_id)
         # results = session.exec(statement)
@@ -199,6 +279,7 @@ async def delete_student(student_id: Annotated[int, Path()]):
 
 @app.get("/teachers/{teacher_id}", tags=["Teacher"])
 def get_teacher(
+    admin_user: admin_user_deps,
     teacher_id: Annotated[int, Path(title="ID of teacher")]
     ):
     with Session(engine_global) as session:
@@ -208,7 +289,9 @@ def get_teacher(
         return searched_teacher
 
 @app.get("/teachers/", tags=["Teacher"])
-def get_all_teachers():
+def get_all_teachers(
+    admin_user: admin_user_deps,
+):
     with Session(engine_global) as session:
         all_teachers: Annotated[dict[Teacher], Body(embed=True)] = session.exec(select(Teacher)).all()
         if not all_teachers or all_teachers == []:
@@ -217,7 +300,10 @@ def get_all_teachers():
     
 
 @app.post("/teachers/", tags=["Teacher"])
-def post_teacher(teacher: Annotated[TeacherPost, Body()]) :
+def post_teacher(
+    admin_user: admin_user_deps,
+    teacher: Annotated[TeacherPost, Body()]
+) :
     with Session(engine_global) as session:
         teacher_dict = teacher.model_dump()
 
@@ -230,6 +316,7 @@ def post_teacher(teacher: Annotated[TeacherPost, Body()]) :
 
 @app.patch("/teachers/{teacher_id}", tags=["Teacher"])
 def update_teacher(
+    admin_user: admin_user_deps,
     teacher_id: Annotated[int, Path(description="Used for partially updating info on desired teacher")],
     update_info: Annotated[TeacherUpdate, Body(title="Partially Update Teacher")] ):
 
@@ -255,7 +342,11 @@ def update_teacher(
         return {"status": "Teacher has been updated", "teacher": retrieved_teacher}
 
 @app.delete("/teachers/{teacher_id}", tags=["Teacher"])
-async def delete_teacher(teacher_id: Annotated[int , Path(description="Teacher ID to be deleted",title="Teacher ID")]):
+async def delete_teacher(
+    admin_user: admin_user_deps,
+    teacher_id: Annotated[int , Path(description="Teacher ID to be deleted",
+    title="Teacher ID")]
+):
     with Session(engine_global) as session:
         delete_teach = session.get(Teacher, teacher_id)
         if not delete_teach:
@@ -265,14 +356,57 @@ async def delete_teacher(teacher_id: Annotated[int , Path(description="Teacher I
         # session.refresh(delete_teach)
         return {"status":f"succesfully slimed the teach! slimed teach: {delete_teach}"}
 
-@app.get("/departments/{id}",tags=["Department"])
-def get_department(id: Annotated[int, Path()]):
+@app.get("/departments/{department_id}",tags=["Department"])
+def get_department(
+    admin_user: admin_user_deps,
+    department_id: Annotated[int, Path()]
+):
     with Session(engine_global) as session:
-        returned_dept = session.get(Department, id)
+        returned_dept = session.get(Department, department_id)
+        if not returned_dept:
+            raise HTTPException(status_code=404, detail="Department not found")
         return returned_dept
+
+@app.post("/departments/", tags=["Department"])
+def post_department(
+    admin_user: admin_user_deps,
+    department: Annotated[DepartmentPost, Body()]
+):
+    with Session(engine_global) as session:
+        department_dict = department.model_dump()
+        db_department = Department(**department_dict)
+
+        session.add(db_department)
+        session.commit()
+        session.refresh(db_department)
+        
+        return db_department
+
+@app.patch("/departments/{id}", tags=["Department"])
+def update_department(
+    admin_user: admin_user_deps,
+    id: Annotated[int, Path()], 
+    update_inf: Annotated[DepartmentUpdate, Body()]):
+    with Session(engine_global) as session:
+        searched_dept = session.get(Department, id)
+        if not searched_dept:
+            raise HTTPException(status_code=404, detail="Department to update not found!")
+
+        update_inf_dict = update_inf.model_dump(exclude_unset=True)
+
+        for key, value in update_inf_dict.items():
+            setattr(searched_dept, key, value)
+
+        session.add(searched_dept)
+        session.commit()
+
+        session.refresh(searched_dept)
+
+        return {"status": "Department has been updated", "Department": searched_dept}
+
 
 @app.get("/TESTING/",tags=["//TESTING//"])
 def anything_goes_around_here_nowadays():
 
     with Session(engine_global) as session:
-        session.exec(select())
+        return session.exec(select(User)).all()

@@ -4,8 +4,7 @@ from typing import TYPE_CHECKING, Annotated, Optional
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import EmailStr, field_validator
 from sqlmodel import UUID, Field, Relationship, SQLModel
-import uuid # For generating the default value
-from uuid import UUID # For the type hint itself
+from uuid import UUID
 
 if TYPE_CHECKING:
     from .Student import Student
@@ -17,7 +16,6 @@ class UserRole(str, Enum):
     admin = "admin"
     teacher = "teacher"
     student = "student"
-    pass
 
 
 class User(SQLModel, table=True):
@@ -34,7 +32,6 @@ class UserCreate(SQLModel):
     password: str
     role: UserRole = UserRole.student
 
-    # 4. Strict Password Validation
     @field_validator("password")
     @classmethod
     def validate_password(cls, value: str) -> str:

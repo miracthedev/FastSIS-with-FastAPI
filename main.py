@@ -1,18 +1,18 @@
 from contextlib import asynccontextmanager
-from datetime import datetime
 import logging
-from typing import Annotated, Optional
-from fastapi import Body, Depends, FastAPI, HTTPException, Path, Query, status
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from typing import Annotated
+from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import Engine
-from sqlmodel import Field, SQLModel, Session, delete, select
-from models.StudentLectureLink import StudentLectureLink
+from sqlmodel import  Session, delete, select
 from models import Class, Department, Lecture, Student, Teacher, User
-from models.Department import DepartmentUpdate, DepartmentPost
-from models.Teacher import TeacherPost, TeacherUpdate
+from models.Class import Buildings
 from models.User import UserCreate, UserRole
 from auth.auth import get_password_hash, verify_password, create_access_token, get_current_user, require_role
 from sql import start_db
+
+# Routers
+from routers import departmentRoute, lectureRoute, studentRoute, teacherRoute
 
 # Global engine
 engine_global = start_db()
@@ -26,7 +26,7 @@ def create_teachers(engine: Engine):
             teacher3 = Teacher(fullname="234")
             teacher4 = Teacher(fullname="1 1 1")
 
-            session.add(teacher1)  
+            session.add(teacher1)
             session.add(teacher2)
             session.add(teacher3)
             session.add(teacher4)
@@ -69,7 +69,7 @@ def create_lectures(engine: Engine):
         if not existing_lectures:
             lect1 = Lecture(name="Discrete Math", lecture_code="MATH206", lecture_dept=1, lecture_session=1)
             lect2 = Lecture(name="Object Orianted Programming", lecture_code="COMP201", lecture_dept=1, lecture_session=1)
-            lect3 = Lecture(name="Judaism 101", lecture_code="JUD101", lecture_dept=3, lecture_session=1)
+            lect3 = Lecture(name="Yoga 101", lecture_code="YOGA101", lecture_dept=3, lecture_session=1)
 
             session.add(lect1)  
             session.add(lect2)
@@ -81,14 +81,49 @@ def create_classes(engine: Engine):
     with Session(engine) as session:
         existing_classes = session.get(Class, 1)
         if not existing_classes:
-            class1 = Class(class_name="F123")
-            class2 = Class(class_name="A440")
+            class1 = Class(name="F123", resides_in=Buildings.ambarch, floor=2)
+            class2 = Class(name="A440", resides_in=Buildings.celik_bina, floor=3)
 
             session.add(class1)
             session.add(class2)
             logging.info("Classes added to the database!")
             pass
 
+def create_users(engine: Engine):
+    with Session(engine) as session:
+        statement = select(User).where(User.email == "mirac@gmail.com")
+        existing_user = session.exec(statement).first()
+        
+        if not existing_user:
+            hashed_pw = get_password_hash("Mirac2026")
+            new_user = User(
+                email="mirac@gmail.com", 
+                hashed_password=hashed_pw, 
+                role=UserRole.admin
+            )
+            session.add(new_user)
+            print("Admin user created!")
+
+            hashed_pw = get_password_hash("Dilara2026")
+            new_user = User(
+                email="dilara@gmail.com", 
+                hashed_password=hashed_pw, 
+                role=UserRole.student
+            )
+            session.add(new_user)
+
+            hashed_pw = get_password_hash("Ali2026")
+            new_user = User(
+                email="ali@gmail.com", 
+                hashed_password=hashed_pw, 
+                role=UserRole.teacher
+            )
+            session.add(new_user)
+            print("Teacher user created!")
+
+
+            session.commit()
+            print("Student user created!")
 
 logging.info("Confirmation that things are working.")
 
@@ -102,10 +137,16 @@ async def lifespan(app: FastAPI):
     create_lectures(engine_global)
     create_departments(engine_global)
     create_classes(engine_global)
+    create_users(engine_global)
     yield
 
 # Attach the lifespan to your FastAPI app
 app = FastAPI(lifespan=lifespan)
+
+app.include_router(studentRoute.router)
+app.include_router(teacherRoute.router)
+app.include_router(departmentRoute.router)
+app.include_router(lectureRoute.router)
 #########################################
 
 
@@ -219,191 +260,6 @@ def WIPE_OUT(
             session.commit()
 
             return{"result": "☢️'d database"}
-
-@app.get("/students/{student_id}", tags=["Student"])
-async def get_student(
-    admin_user: admin_user_deps, #DONT DELETE, ITS USED
-    student_id: int, 
-    q: Annotated[str | None, Query(lt=100)] = None,
-    ):
-    with Session(engine_global) as session:
-        student = session.get(Student, student_id)
-        if not student:
-            raise HTTPException(status_code=404, detail="Student not found")
-            
-        student_dict = student.model_dump()
-        if q:
-            return {**student_dict, "q": q}
-        return student_dict
-
-@app.get("/students/", tags=["Student"])
-async def get_all_students(
-    admin_user: admin_user_deps
-):
-    with Session(engine_global) as session:
-        all_students = session.exec(select(Student)).all()
-        if all_students == None:
-            raise HTTPException(status_code=404, detail="No student found!")
-        return all_students
-
-
-@app.post("/students/", tags=["Student"])
-async def create_student(student: Student,admin_user: admin_user_deps):
-    with Session(engine_global) as session:
-        session.add(student)
-        session.commit()
-        session.refresh(student)
-        return student
-
-@app.patch("/students/{student_id}", tags=["Student"])
-async def update_student(student_id: int, student: Annotated[Student, Body(embed=True)], admin_user: admin_user_deps):
-    results = {"student_id": student_id, "student": student}
-    return results
-
-@app.delete("/students/{student_id}", tags=["Student"])
-async def delete_student(student_id: Annotated[int, Path()], admin_user: admin_user_deps):
-    with Session(engine_global) as session:
-        # statement = select(Student).where(Student.student_id == student_id)
-        # results = session.exec(statement)
-        student = session.get(Student, student_id)
-
-        if not student:
-            raise HTTPException(status_code=404, detail="Student not found")
-
-        print("Student: ", student)
-
-        session.delete(student)
-        session.commit()
-        
-        return {"ok": True, "message": f"Student {student_id} successfully deleted"}
-
-@app.get("/teachers/{teacher_id}", tags=["Teacher"])
-def get_teacher(
-    admin_user: admin_user_deps,
-    teacher_id: Annotated[int, Path(title="ID of teacher")]
-    ):
-    with Session(engine_global) as session:
-        searched_teacher = session.get(Teacher, teacher_id)
-        if not searched_teacher:
-            raise HTTPException(status_code=404, detail="Teacher Not found")
-        return searched_teacher
-
-@app.get("/teachers/", tags=["Teacher"])
-def get_all_teachers(
-    admin_user: admin_user_deps,
-):
-    with Session(engine_global) as session:
-        all_teachers: Annotated[dict[Teacher], Body(embed=True)] = session.exec(select(Teacher)).all()
-        if not all_teachers or all_teachers == []:
-            raise HTTPException(status_code=404, detail="Teacher Not Found!")
-        return all_teachers
-    
-
-@app.post("/teachers/", tags=["Teacher"])
-def post_teacher(
-    admin_user: admin_user_deps,
-    teacher: Annotated[TeacherPost, Body()]
-) :
-    with Session(engine_global) as session:
-        teacher_dict = teacher.model_dump()
-
-        TeacherPost_to_Teacher: Teacher = Teacher(**teacher_dict)
-
-        session.add(TeacherPost_to_Teacher)
-        session.commit()
-        session.refresh(TeacherPost_to_Teacher)
-        return TeacherPost_to_Teacher
-
-@app.patch("/teachers/{teacher_id}", tags=["Teacher"])
-def update_teacher(
-    admin_user: admin_user_deps,
-    teacher_id: Annotated[int, Path(description="Used for partially updating info on desired teacher")],
-    update_info: Annotated[TeacherUpdate, Body(title="Partially Update Teacher")] ):
-
-    with Session(engine_global) as session:
-        retrieved_teacher = session.get(Teacher, teacher_id)
-
-        if not retrieved_teacher:
-            raise HTTPException(status_code=404, detail="Teacher not found!")
-
-        update_data = update_info.model_dump(exclude_unset=True)
-
-        if not update_data:
-            return {"status": "Nothing has been updated, input is empty"}
-
-        for key, value in update_data.items():
-            setattr(retrieved_teacher, key, value)
-
-        session.add(retrieved_teacher)
-        session.commit()
-
-        session.refresh(retrieved_teacher)
-
-        return {"status": "Teacher has been updated", "teacher": retrieved_teacher}
-
-@app.delete("/teachers/{teacher_id}", tags=["Teacher"])
-async def delete_teacher(
-    admin_user: admin_user_deps,
-    teacher_id: Annotated[int , Path(description="Teacher ID to be deleted",
-    title="Teacher ID")]
-):
-    with Session(engine_global) as session:
-        delete_teach = session.get(Teacher, teacher_id)
-        if not delete_teach:
-            raise HTTPException(status_code=404, detail="Teacher not found!")
-        session.delete(delete_teach)
-        session.commit()
-        # session.refresh(delete_teach)
-        return {"status":f"succesfully slimed the teach! slimed teach: {delete_teach}"}
-
-@app.get("/departments/{department_id}",tags=["Department"])
-def get_department(
-    admin_user: admin_user_deps,
-    department_id: Annotated[int, Path()]
-):
-    with Session(engine_global) as session:
-        returned_dept = session.get(Department, department_id)
-        if not returned_dept:
-            raise HTTPException(status_code=404, detail="Department not found")
-        return returned_dept
-
-@app.post("/departments/", tags=["Department"])
-def post_department(
-    admin_user: admin_user_deps,
-    department: Annotated[DepartmentPost, Body()]
-):
-    with Session(engine_global) as session:
-        department_dict = department.model_dump()
-        db_department = Department(**department_dict)
-
-        session.add(db_department)
-        session.commit()
-        session.refresh(db_department)
-        
-        return db_department
-
-@app.patch("/departments/{id}", tags=["Department"])
-def update_department(
-    admin_user: admin_user_deps,
-    id: Annotated[int, Path()], 
-    update_inf: Annotated[DepartmentUpdate, Body()]):
-    with Session(engine_global) as session:
-        searched_dept = session.get(Department, id)
-        if not searched_dept:
-            raise HTTPException(status_code=404, detail="Department to update not found!")
-
-        update_inf_dict = update_inf.model_dump(exclude_unset=True)
-
-        for key, value in update_inf_dict.items():
-            setattr(searched_dept, key, value)
-
-        session.add(searched_dept)
-        session.commit()
-
-        session.refresh(searched_dept)
-
-        return {"status": "Department has been updated", "Department": searched_dept}
-
 
 @app.get("/TESTING/",tags=["//TESTING//"])
 def anything_goes_around_here_nowadays():

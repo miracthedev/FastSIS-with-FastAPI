@@ -55,7 +55,7 @@ async def get_current_user(
     )
     
     try:
-        # Decode the token
+        # Decoding of token
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         username: str = payload.get("sub")
         if username is None:
@@ -63,7 +63,7 @@ async def get_current_user(
     except InvalidTokenError:
         raise credentials_exception
         
-    # Fetch the user from the DB
+    # Fetch user from DB
     user = session.exec(select(User).where(User.email == username)).first()
     if user is None:
         raise credentials_exception

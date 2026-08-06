@@ -26,7 +26,7 @@ class ClassPost(SQLModel):
     resides_in: Buildings = Buildings.default
     floor: Annotated[int, Field(default=0, ge=-5, le=5)]
 
-class ClassUpdate():
+class ClassUpdate(SQLModel):
     name: Annotated[str | None, Field(default=None)]
     resides_in: Annotated[Buildings, Field(default=None)]
     floor: Annotated[int, Field(default=0, ge=-5, le=5)]
